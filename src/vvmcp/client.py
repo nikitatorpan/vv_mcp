@@ -17,6 +17,7 @@ class VkusvillClient:
         self.timeout = timeout
         self._client: httpx.AsyncClient | None = None
         self._session_id: str | None = None
+        self._initialized: bool = False
 
     async def _get_client(self) -> httpx.AsyncClient:
         """Получить или создать HTTP клиент."""
@@ -30,6 +31,7 @@ class VkusvillClient:
             await self._client.aclose()
             self._client = None
         self._session_id = None
+        self._initialized = False
 
     async def _init_session(self) -> bool:
         """Инициализировать MCP сессию."""
@@ -53,19 +55,23 @@ class VkusvillClient:
 
         response = await client.post(self.mcp_url, json=init_payload, headers=headers)
 
-        # Извлекаем Session ID из заголовков
+        # Сервер должен ответить корректным JSON-RPC результатом инициализации
+        try:
+            init_result = response.json()
+        except ValueError:
+            return False
+        if "error" in init_result or "result" not in init_result:
+            return False
+
+        # Session ID опционален: официальный API ВкусВилл работает без него (stateless).
+        # Если заголовок есть — сохраняем и передаём в последующих запросах.
         session_id = response.headers.get("mcp-session-id")
         if not session_id:
-            # Пробуем case-insensitive поиск
             for key, value in response.headers.items():
                 if key.lower() == "mcp-session-id":
                     session_id = value
                     break
-
-        if not session_id:
-            return False
-
-        self._session_id = session_id
+        self._session_id = session_id or None
 
         # Отправляем уведомление об инициализации
         notify_payload = {
@@ -73,16 +79,17 @@ class VkusvillClient:
             "method": "notifications/initialized",
             "params": {},
         }
-
-        headers["Mcp-Session-Id"] = self._session_id
+        if self._session_id:
+            headers["Mcp-Session-Id"] = self._session_id
         await client.post(self.mcp_url, json=notify_payload, headers=headers)
 
+        self._initialized = True
         return True
 
     async def _call_tool(self, tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         """Вызвать инструмент MCP API."""
         # Инициализируем сессию если нужно
-        if not self._session_id:
+        if not self._initialized:
             if not await self._init_session():
                 raise RuntimeError("Не удалось инициализировать MCP сессию")
 
@@ -91,8 +98,9 @@ class VkusvillClient:
         headers = {
             "Content-Type": "application/json",
             "Accept": "application/json, text/event-stream",
-            "Mcp-Session-Id": self._session_id,
         }
+        if self._session_id:
+            headers["Mcp-Session-Id"] = self._session_id
 
         payload = {
             "jsonrpc": "2.0",
@@ -127,6 +135,7 @@ class VkusvillClient:
                 if attempt > 0:
                     # Сбрасываем сессию перед повторной попыткой
                     self._session_id = None
+                    self._initialized = False
                     await asyncio.sleep(2)
 
                 return await self._call_tool(tool_name, arguments)
