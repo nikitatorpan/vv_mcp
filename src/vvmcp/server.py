@@ -76,17 +76,43 @@ def format_product(product: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def _clean_value(value: Any) -> str:
+    """Очистить строковое значение от HTML-мусора."""
+    text = str(value).replace("&nbsp;", " ")
+    text = text.replace("<br>", "\n").replace("<br/>", "\n").replace("<br />", "\n")
+    return text.strip().rstrip(";").strip()
+
+
 def format_product_details(product: dict[str, Any]) -> str:
     """Форматирование детальной информации о товаре."""
     lines = [format_product(product)]
 
     if description := product.get("description"):
-        lines.append(f"\n**Описание:**\n{description}")
+        lines.append(f"\n**Описание:**\n{_clean_value(description)}")
 
+    # Основные характеристики (состав, КБЖУ, срок годности и т.д.) приходят
+    # массивом properties: [{"name": ..., "value": ...}]. Раньше сервер искал
+    # несуществующие корневые ключи (calories/composition/...) и терял их.
+    properties = product.get("properties") or []
+    if isinstance(properties, list) and properties:
+        lines.append("\n**Характеристики:**")
+        for prop in properties:
+            if not isinstance(prop, dict):
+                continue
+            pname = prop.get("name")
+            pvalue = _clean_value(prop.get("value", ""))
+            if not pname or not pvalue:
+                continue
+            # Многострочные значения (состав, КБЖУ) выводим с новой строки
+            if "\n" in pvalue:
+                lines.append(f"- **{pname}:**\n{pvalue}")
+            else:
+                lines.append(f"- **{pname}:** {pvalue}")
+
+    # Обратная совместимость: если API вдруг отдаёт поля в корне
     if composition := product.get("composition"):
-        lines.append(f"\n**Состав:**\n{composition}")
+        lines.append(f"\n**Состав:**\n{_clean_value(composition)}")
 
-    # КБЖУ
     nutrition = []
     if calories := product.get("calories"):
         nutrition.append(f"Калории: {calories} ккал")
@@ -96,16 +122,9 @@ def format_product_details(product: dict[str, Any]) -> str:
         nutrition.append(f"Жиры: {fats} г")
     if carbs := product.get("carbohydrates"):
         nutrition.append(f"Углеводы: {carbs} г")
-
     if nutrition:
         lines.append("\n**КБЖУ (на 100г):**")
         lines.extend(nutrition)
-
-    if storage := product.get("storage_conditions"):
-        lines.append(f"\n**Условия хранения:** {storage}")
-
-    if shelf_life := product.get("shelf_life"):
-        lines.append(f"**Срок годности:** {shelf_life}")
 
     return "\n".join(lines)
 
