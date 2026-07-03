@@ -181,7 +181,23 @@ class VkusvillClient:
             },
         )
 
-        return self._parse_mcp_result(result)
+        parsed = self._parse_mcp_result(result)
+        self._raise_if_api_error(parsed)
+        return parsed
+
+    def _raise_if_api_error(self, parsed: dict[str, Any]) -> None:
+        """Поднять понятную ошибку, если API вернул бизнес-ошибку ({"ok": false}).
+
+        Официальный API оборачивает ошибки внутрь текстового content с полем
+        ``ok: false`` (например rate limit / 429), а на уровне MCP при этом
+        ``isError`` = false. Без этой проверки сервер молча отдаёт «не найдено».
+        """
+        if isinstance(parsed, dict) and parsed.get("ok") is False:
+            err = parsed.get("error") or {}
+            msg = err.get("message") or parsed.get("code") or "неизвестная ошибка API"
+            status = err.get("http_status")
+            suffix = f" (HTTP {status})" if status else ""
+            raise RuntimeError(f"API ВкусВилл: {msg}{suffix}")
 
     def _parse_mcp_result(self, result: dict[str, Any]) -> dict[str, Any]:
         """Парсинг результата MCP в унифицированный формат."""
@@ -216,7 +232,9 @@ class VkusvillClient:
             {"id": product_id},
         )
 
-        return self._parse_mcp_result(result)
+        parsed = self._parse_mcp_result(result)
+        self._raise_if_api_error(parsed)
+        return parsed
 
     async def get_product_by_url(self, url: str) -> dict[str, Any]:
         """
@@ -265,6 +283,7 @@ class VkusvillClient:
 
         # Извлекаем URL из результата
         parsed = self._parse_mcp_result(result)
+        self._raise_if_api_error(parsed)
 
         if isinstance(parsed, dict):
             # Пробуем разные варианты структуры ответа
