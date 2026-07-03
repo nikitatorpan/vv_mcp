@@ -267,12 +267,13 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
 
         elif name == "get_product_details":
             result = await client.get_product_details(arguments["product_id"])
-            product = result.get("good", result)
+            # API возвращает {"ok": true, "data": {...}}; разворачиваем как в поиске
+            product = result.get("data", result.get("good", result))
             return [TextContent(type="text", text=format_product_details(product))]
 
         elif name == "get_product_by_url":
             result = await client.get_product_by_url(arguments["url"])
-            product = result.get("good", result)
+            product = result.get("data", result.get("good", result))
             return [TextContent(type="text", text=format_product_details(product))]
 
         elif name == "create_cart_link":
